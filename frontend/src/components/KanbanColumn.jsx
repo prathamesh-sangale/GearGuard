@@ -3,7 +3,7 @@ import { useDroppable } from '@dnd-kit/core';
 import { format, parseISO } from 'date-fns';
 import KanbanCard from './KanbanCard';
 
-const KanbanColumn = ({ id, title, requests = [], isDroppable = true, onAssign }) => {
+const KanbanColumn = ({ id, title, requests = [], isDroppable = true, onAssign, onCreateFollowUp }) => {
     const { setNodeRef, isOver } = useDroppable({
         id: id,
         disabled: !isDroppable
@@ -34,7 +34,13 @@ const KanbanColumn = ({ id, title, requests = [], isDroppable = true, onAssign }
                             date={request.scheduled_date ? format(parseISO(request.scheduled_date), 'MMM d') : '-'}
                             isOverdue={request.isOverdue}
                             status={request.status}
+                            workCenter={request.work_center}
+                            created_at={request.created_at}
+                            picked_up_at={request.picked_up_at}
+                            completed_at={request.completed_at}
+                            follow_up_of={request.follow_up_of_request_id}
                             onAssign={onAssign}
+                            onCreateFollowUp={onCreateFollowUp}
                         />
                     ))
                 ) : (

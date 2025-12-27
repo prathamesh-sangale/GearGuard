@@ -8,10 +8,12 @@ const EquipmentPage = () => {
     const [equipment, setEquipment] = useState([]);
     const [loading, setLoading] = useState(true);
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const [lastSynced, setLastSynced] = useState(new Date());
     const { user } = useUser();
     const navigate = useNavigate();
 
-    const fetchEquipment = () => {
+    const fetchEquipment = (isBackground = false) => {
+        if (!isBackground) setLoading(true);
         const headers = {
             'X-User-Role': user.role,
             'X-User-Id': user.id,
@@ -21,16 +23,21 @@ const EquipmentPage = () => {
             .then(res => res.json())
             .then(data => {
                 setEquipment(data);
-                setLoading(false);
+                setLastSynced(new Date());
+                if (!isBackground) setLoading(false);
             })
             .catch(err => {
                 console.error('Error fetching equipment:', err);
-                setLoading(false);
+                if (!isBackground) setLoading(false);
             });
     };
 
     useEffect(() => {
         fetchEquipment();
+        const interval = setInterval(() => {
+            fetchEquipment(true);
+        }, 30000); // 30s refresh for inventory
+        return () => clearInterval(interval);
     }, []);
 
     if (loading) {
@@ -50,7 +57,15 @@ const EquipmentPage = () => {
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
                 <div>
                     <h1 className="text-2xl font-black text-brand-text uppercase tracking-tighter">Asset Inventory – AutoMotion Motors</h1>
-                    <p className="text-xs font-bold text-brand-muted uppercase tracking-widest mt-1">Production Equipment & Assembly Line Assets</p>
+                    <div className="flex items-center gap-3 mt-1">
+                        <p className="text-xs font-bold text-brand-muted uppercase tracking-widest">
+                            Production Equipment & Assembly Line Assets
+                        </p>
+                        <div className="flex items-center gap-1.5 px-2 py-0.5 bg-green-50 text-green-700 rounded-full border border-green-200">
+                            <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></div>
+                            <span className="text-[9px] font-black uppercase tracking-widest">Live • {lastSynced.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                        </div>
+                    </div>
                 </div>
                 {user.role === 'SUPER_ADMIN' && (
                     <button
@@ -86,11 +101,25 @@ const EquipmentPage = () => {
 
             {/* Assets Table/Grid */}
             <div className="bg-white border-2 border-brand-border rounded-sm overflow-hidden">
-                <div className="grid grid-cols-12 bg-gray-50 border-b-2 border-brand-border px-6 py-4">
-                    <div className="col-span-5 text-[10px] font-black text-brand-muted uppercase tracking-widest">Asset Name</div>
-                    <div className="col-span-3 text-[10px] font-black text-brand-muted uppercase tracking-widest">Department</div>
-                    <div className="col-span-3 text-[10px] font-black text-brand-muted uppercase tracking-widest">Location</div>
-                    <div className="col-span-1"></div>
+                <div className={`grid ${user.role === 'SUPER_ADMIN' ? 'grid-cols-12' : 'grid-cols-12'} bg-gray-50 border-b-2 border-brand-border px-6 py-4`}>
+                    <div className="col-span-4 text-[10px] font-black text-brand-muted uppercase tracking-widest">Asset Name</div>
+                    <div className="col-span-2 text-[10px] font-black text-brand-muted uppercase tracking-widest">Department</div>
+
+                    {user.role === 'SUPER_ADMIN' ? (
+                        <>
+                            {/* Super Admin Columns */}
+                            <div className="col-span-2 text-[10px] font-black text-brand-muted uppercase tracking-widest">Status</div>
+                            <div className="col-span-3 text-[10px] font-black text-brand-muted uppercase tracking-widest">Active Issues</div>
+                            <div className="col-span-1"></div>
+                        </>
+                    ) : (
+                        <>
+                            {/* Standard View */}
+                            <div className="col-span-3 text-[10px] font-black text-brand-muted uppercase tracking-widest">Location</div>
+                            <div className="col-span-2"></div>
+                            <div className="col-span-1"></div>
+                        </>
+                    )}
                 </div>
 
                 <div className="divide-y-2 divide-brand-border">
@@ -98,11 +127,19 @@ const EquipmentPage = () => {
                         equipment.map((item) => (
                             <div
                                 key={item.id}
-                                onClick={() => navigate(`/equipment/${item.id}`)}
+                                onClick={() => {
+                                    if (user.role === 'SUPER_ADMIN' && item.open_requests_count > 0) {
+                                        // If Super Admin and has issues, go straight to board to Manage
+                                        navigate(`/?equipmentId=${item.id}`);
+                                    } else {
+                                        // Standard detail view
+                                        navigate(`/equipment/${item.id}`);
+                                    }
+                                }}
                                 className="grid grid-cols-12 px-6 py-6 items-center hover:bg-gray-50/50 cursor-pointer group transition-all"
                             >
-                                <div className="col-span-5 flex items-center gap-4">
-                                    <div className={`w-10 h-10 border-2 ${item.is_scrapped ? 'border-red-200 bg-red-50 text-red-500' : 'border-brand-border bg-white text-brand-text'} rounded-sm flex items-center justify-center font-black text-xs`}>
+                                <div className="col-span-4 flex items-center gap-4">
+                                    <div className={`w-10 h-10 border-2 ${item.is_scrapped ? 'border-red-200 bg-red-50 text-red-500' : (item.open_requests_count > 0 ? 'border-amber-200 bg-amber-50 text-amber-600' : 'border-brand-border bg-white text-brand-text')} rounded-sm flex items-center justify-center font-black text-xs`}>
                                         EQ-{item.id}
                                     </div>
                                     <div>
@@ -111,20 +148,47 @@ const EquipmentPage = () => {
                                     </div>
                                 </div>
 
-                                <div className="col-span-2 text-[10px] font-bold text-brand-text uppercase tracking-wider flex items-center gap-2">
-                                    <Building2 size={12} className="text-brand-muted" />
-                                    {item.department}
+                                <div className="col-span-2 text-[10px] font-bold text-brand-text uppercase tracking-wider flex flex-col gap-1">
+                                    <div className="flex items-center gap-2">
+                                        <MapPin size={12} className="text-brand-muted" />
+                                        {item.location}
+                                    </div>
+                                    {item.work_center && (
+                                        <div className="text-[8px] text-brand-muted pl-5">
+                                            WC: {item.work_center}
+                                        </div>
+                                    )}
                                 </div>
 
-                                <div className="col-span-2 text-[10px] font-bold text-brand-text uppercase tracking-wider flex items-center gap-2">
-                                    <MapPin size={12} className="text-brand-muted" />
-                                    {item.location}
-                                </div>
+                                {user.role === 'SUPER_ADMIN' ? (
+                                    <>
+                                        {/* Status */}
+                                        <div className="col-span-2">
+                                            {item.is_scrapped ? (
+                                                <span className="inline-flex items-center px-2 py-0.5 rounded text-[9px] font-black bg-red-100 text-red-600 uppercase tracking-wide">Scrapped</span>
+                                            ) : item.open_requests_count > 0 ? (
+                                                <span className="inline-flex items-center px-2 py-0.5 rounded text-[9px] font-black bg-amber-100 text-amber-700 uppercase tracking-wide">Under Maintenance</span>
+                                            ) : (
+                                                <span className="inline-flex items-center px-2 py-0.5 rounded text-[9px] font-black bg-green-100 text-green-700 uppercase tracking-wide">Active</span>
+                                            )}
+                                        </div>
 
-                                <div className="col-span-3 text-[10px] font-bold text-brand-text uppercase tracking-wider flex items-center gap-2">
-                                    <User size={12} className="text-brand-muted" />
-                                    {item.assigned_employee || "—"}
-                                </div>
+                                        {/* Live Count */}
+                                        <div className="col-span-3 flex items-center gap-2">
+                                            <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-black ${item.open_requests_count > 0 ? 'bg-red-500 text-white' : 'bg-gray-100 text-gray-400'}`}>
+                                                {item.open_requests_count || 0}
+                                            </div>
+                                        </div>
+                                    </>
+                                ) : (
+                                    <>
+                                        <div className="col-span-3 text-[10px] font-bold text-brand-text uppercase tracking-wider flex items-center gap-2">
+                                            <MapPin size={12} className="text-brand-muted" />
+                                            {item.location}
+                                        </div>
+                                        <div className="col-span-2"></div>
+                                    </>
+                                )}
 
                                 <div className="col-span-1 flex justify-end">
                                     <ChevronRight size={16} className="text-brand-border group-hover:text-brand-primary translate-x-0 group-hover:translate-x-1 transition-all" />

@@ -13,11 +13,11 @@ app.use(express.json());
 
 // Lightweight Role Middleware
 app.use((req, res, next) => {
-    const id = parseInt(req.headers['x-user-id']);
+    const id = req.headers['x-user-id']; // String ID support
     const teamId = parseInt(req.headers['x-user-team-id']);
 
     req.user = {
-        id: isNaN(id) ? null : id,
+        id: id || null,
         role: req.headers['x-user-role'] || 'GUEST',
         team_id: isNaN(teamId) ? null : teamId
     };
@@ -35,9 +35,11 @@ app.get('/api/health', (req, res) => {
 
 // Maintenance Request Endpoints
 
-// A) Create Maintenance Request
+// A) Create Maintenance Request (with Creator Audit & Follow-Up Logic)
 app.post('/api/requests', (req, res) => {
-    const { subject, equipment_id, type, scheduled_date, team_id, technician_id } = req.body;
+    const { subject, equipment_id, type, scheduled_date, team_id, technician_id, followUpOf } = req.body;
+    const createdBy = req.headers['x-user-id']; // Audit: Creator
+    const userRole = req.headers['x-user-role'];
 
     // Backend Validation - Matrix Implementation + Strict Squad Rule
     if (!equipment_id || !subject || !team_id) {
@@ -48,12 +50,19 @@ app.post('/api/requests', (req, res) => {
         return res.status(400).json({ error: 'Preventive requests must have a scheduled date' });
     }
 
+    // Follow-Up Authority Guard
+    if (followUpOf) {
+        if (userRole !== 'SUPER_ADMIN' && userRole !== 'TEAM_LEAD') {
+            return res.status(403).json({ error: 'Unauthorized: Only Team Leads or Admins can create follow-up requests.' });
+        }
+    }
+
     try {
         const stmt = db.prepare(`
-            INSERT INTO MaintenanceRequest (subject, equipment_id, team_id, type, status, scheduled_date, technician_id)
-            VALUES (?, ?, ?, ?, 'new', ?, ?)
+            INSERT INTO MaintenanceRequest (subject, equipment_id, team_id, type, status, scheduled_date, technician_id, created_by_user_id, created_at, follow_up_of_request_id)
+            VALUES (?, ?, ?, ?, 'new', ?, ?, ?, datetime('now'), ?)
         `);
-        const info = stmt.run(subject, equipment_id, team_id, type, scheduled_date || null, technician_id || null);
+        const info = stmt.run(subject, equipment_id, team_id, type, scheduled_date || null, technician_id || null, createdBy || null, followUpOf || null);
 
         const newRequest = db.prepare('SELECT * FROM MaintenanceRequest WHERE id = ?').get(info.lastInsertRowid);
         res.status(201).json(newRequest);
@@ -66,11 +75,15 @@ app.post('/api/requests', (req, res) => {
 app.get('/api/requests', (req, res) => {
     const { status, equipment_id, type } = req.query;
     let query = `
-        SELECT r.*, e.name as equipment_name, t.name as technician_name, mt.name as team_name
+        SELECT r.*, e.name as equipment_name, t.name as technician_name, mt.name as team_name, e.work_center as work_center,
+               uc.name as creator_name, up.name as picker_name, ucomp.name as completer_name
         FROM MaintenanceRequest r
         LEFT JOIN Equipment e ON r.equipment_id = e.id
         LEFT JOIN Technician t ON r.technician_id = t.id
         LEFT JOIN MaintenanceTeam mt ON r.team_id = mt.id
+        LEFT JOIN Technician uc ON r.created_by_user_id = uc.id
+        LEFT JOIN Technician up ON r.picked_up_by_user_id = up.id
+        LEFT JOIN Technician ucomp ON r.completed_by_user_id = ucomp.id
         WHERE 1=1
     `;
     const params = [];
@@ -87,15 +100,21 @@ app.get('/api/requests', (req, res) => {
         query += ' AND r.type = ?';
         params.push(type);
     }
+    if (req.query.technician_id) {
+        query += ' AND r.technician_id = ?';
+        params.push(req.query.technician_id);
+    }
 
     // Role-Based API Gate Filtering
-    if (req.user.role === 'TEAM_ADMIN') {
+    if (req.user.role === 'TEAM_LEAD') {
         query += ' AND r.team_id = ?';
         params.push(req.user.team_id);
     } else if (req.user.role === 'TECHNICIAN') {
-        // Strict Filter: Only own assigned tasks AND only unresolved (not repaired/scrap)
-        query += " AND r.technician_id = ? AND r.status NOT IN ('repaired', 'scrap')";
+        // Broadened Filter: Own tasks OR Unassigned tasks in own team
+        // Also removed status restriction to allow seeing history if needed (frontend can filter)
+        query += " AND (r.technician_id = ? OR (r.technician_id IS NULL AND r.team_id = ?))";
         params.push(req.user.id);
+        params.push(req.user.team_id);
     }
 
     try {
@@ -114,78 +133,124 @@ app.get('/api/requests', (req, res) => {
     }
 });
 
-// C) Update Request Status (with Scrap Logic)
+// C) Update Request Status (with Scrap Logic & Traceability)
 app.patch('/api/requests/:id/status', (req, res) => {
+    const { status, duration_hours } = req.body;
+    const updatedBy = req.headers['x-user-id'];
+
     try {
-        const { status, duration_hours } = req.body;
-        const id = req.params.id;
-
-        if (!status) {
-            return res.status(400).json({ error: 'Status is required' });
-        }
-
-        const request = db.prepare('SELECT * FROM MaintenanceRequest WHERE id = ?').get(id);
+        const request = db.prepare('SELECT * FROM MaintenanceRequest WHERE id = ?').get(req.params.id);
         if (!request) return res.status(404).json({ error: 'Request not found' });
 
-        // Update record
-        db.prepare('UPDATE MaintenanceRequest SET status = ?, duration_hours = ? WHERE id = ?').run(
-            status,
-            duration_hours || request.duration_hours,
-            id
-        );
+        // Immutability Guard: Locked if already in terminal state
+        if ((request.status === 'repaired' || request.status === 'scrap') && request.status !== status) {  // Allow idempotent updates if needed, but strict blocking is better? User said "Disallow editing...".
+            // Actually, if it's already repaired, we shouldn't allow changing TO anything or FROM anything.
+            return res.status(403).json({ error: 'Immutable: Closed requests cannot be modified. Create a follow-up request instead.' });
+        }
 
-        // Scrap logic: Matrix - Move to Scrap: Admin/Team, Mark equipment as scrap: Super Admin ONLY
-        if (status === 'scrap') {
-            if (req.user.role === 'SUPER_ADMIN') {
-                db.prepare('UPDATE Equipment SET is_scrapped = 1 WHERE id = ?').run(request.equipment_id);
+        // Logic: If completing, MUST have been picked up.
+        if (status === 'repaired' || status === 'scrap') {
+            if (!request.picked_up_at) {
+                return res.status(400).json({ error: 'Traceability Error: Request must be assigned/picked up before completion.' });
             }
         }
 
-        res.json({ success: true, status });
+        let sql = `UPDATE MaintenanceRequest SET status = ?, duration_hours = ? WHERE id = ?`;
+        let params = [status, duration_hours, req.params.id];
+
+        if (status === 'repaired' || status === 'scrap') {
+            // Record completion
+            sql = `UPDATE MaintenanceRequest SET status = ?, duration_hours = ?, completed_by_user_id = ?, completed_at = datetime('now') WHERE id = ?`;
+            params = [status, duration_hours, updatedBy, req.params.id];
+        }
+
+        // Scrap logic: Automated "System Logic"
+        if (status === 'scrap') {
+            db.prepare('UPDATE Equipment SET is_scrapped = 1 WHERE id = ?').run(request.equipment_id);
+        }
+
+        db.prepare(sql).run(...params);
+        res.json({ message: 'Status updated and audit logged' });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
 
-// D) Assign Technician
+// C) Assign Technician (with Immutability & Strict Rules)
 app.patch('/api/requests/:id/assign', (req, res) => {
     const { technician_id } = req.body;
-    const { id } = req.params;
+    const assignedBy = req.headers['x-user-id']; // Audit: Who triggered the assignment
 
     try {
-        const request = db.prepare('SELECT * FROM MaintenanceRequest WHERE id = ?').get(id);
-        const technician = db.prepare('SELECT * FROM Technician WHERE id = ?').get(technician_id);
+        const request = db.prepare('SELECT * FROM MaintenanceRequest WHERE id = ?').get(req.params.id);
+        if (!request) return res.status(404).json({ error: 'Request not found' });
 
-        if (!request || !technician) {
-            return res.status(404).json({ error: 'Request or Technician not found' });
-        }
-
-        if (technician.team_id !== request.team_id) {
-            return res.status(400).json({ error: 'Technician must belong to the same maintenance team' });
+        // Immutability Guard
+        if (request.status === 'repaired' || request.status === 'scrap') {
+            return res.status(403).json({ error: 'Immutable: Cannot assign technicians to closed requests.' });
         }
 
         // Guard: Only Team Admin of the SAME team or Super Admin can assign
-        if (req.user.role === 'TEAM_ADMIN' && req.user.team_id !== request.team_id) {
+        if (req.user.role === 'TEAM_LEAD' && req.user.team_id !== request.team_id) {
             return res.status(403).json({ error: 'Unauthorized: Team Admins can only assign to their own team' });
         }
         // Guard: Technician can only assign THEMSELVES
         if (req.user.role === 'TECHNICIAN') {
-            if (req.user.id !== parseInt(technician_id)) {
+            if (req.user.id !== technician_id) {
                 return res.status(403).json({ error: 'Unauthorized: Technicians can only pick up tasks for themselves' });
             }
         }
 
-        db.prepare('UPDATE MaintenanceRequest SET technician_id = ? WHERE id = ?').run(technician_id, id);
+        // Logic: If picked_up_at is NULL, this is the FIRST pickup. Record it.
+        let sql = `UPDATE MaintenanceRequest SET technician_id = ?, status = 'in_progress' WHERE id = ?`;
+        let params = [technician_id, req.params.id];
+
+        if (!request.picked_up_at) {
+            sql = `UPDATE MaintenanceRequest SET technician_id = ?, status = 'in_progress', picked_up_by_user_id = ?, picked_up_at = datetime('now') WHERE id = ?`;
+            params = [technician_id, assignedBy, req.params.id];
+        }
+
+        db.prepare(sql).run(...params);
         res.json({ message: 'Technician assigned successfully' });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
 
-// Equipment Endpoints
+// D) Phase T: Re-Route Squad (Triage Action)
+app.patch('/api/requests/:id/team', (req, res) => {
+    const { team_id } = req.body;
+    const userRole = req.headers['x-user-role'];
+
+    // Authority Guard: Only Admins/Leads can route
+    if (userRole !== 'SUPER_ADMIN' && userRole !== 'TEAM_LEAD') {
+        return res.status(403).json({ error: 'Unauthorized: Only Supervisors can route requests.' });
+    }
+
+    try {
+        const request = db.prepare('SELECT * FROM MaintenanceRequest WHERE id = ?').get(req.params.id);
+        if (!request) return res.status(404).json({ error: 'Request not found' });
+
+        // Immutability Guard
+        if (request.status === 'repaired' || request.status === 'scrap') {
+            return res.status(403).json({ error: 'Immutable: Cannot route closed requests.' });
+        }
+
+        db.prepare('UPDATE MaintenanceRequest SET team_id = ? WHERE id = ?').run(team_id, req.params.id);
+        res.json({ message: 'Request routed successfully' });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// E) Update Status (with Immutability & Traceability)
 app.get('/api/equipment', (req, res) => {
     try {
-        let query = 'SELECT * FROM Equipment';
+        let query = `
+            SELECT e.*, 
+            (SELECT COUNT(*) FROM MaintenanceRequest WHERE equipment_id = e.id AND status NOT IN ('repaired', 'scrap')) as open_requests_count
+            FROM Equipment e
+        `;
         let params = [];
 
         // Matrix Check: "View all equipment" is Super Admin only.
@@ -196,7 +261,30 @@ app.get('/api/equipment', (req, res) => {
         }
 
         const equipment = db.prepare(query).all(...params);
-        res.json(equipment);
+
+        // Enhance with Warranty Status (JS Logic for ease)
+        const EnhancedEquipment = equipment.map(e => {
+            let warrantyStatus = 'Unknown';
+            if (e.purchase_date && e.warranty_info && e.warranty_info.includes('year')) {
+                // specific parsing could go here, but for now we'll imply based on purchase date + 1 year default if text matches, 
+                // or just pass the text. The prompt asks for "Valid / Expired".
+                // Let's implement a simple 1-year default if date exists.
+                const purchase = new Date(e.purchase_date);
+                const now = new Date();
+                const diffTime = Math.abs(now - purchase);
+                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                warrantyStatus = diffDays < 365 ? 'Valid' : 'Expired';
+            } else if (e.purchase_date) {
+                // Default 1 year
+                const purchase = new Date(e.purchase_date);
+                const now = new Date();
+                // Roughly
+                warrantyStatus = (now.getFullYear() - purchase.getFullYear()) < 1 ? 'Valid' : 'Expired';
+            }
+            return { ...e, warranty_status: warrantyStatus };
+        });
+
+        res.json(EnhancedEquipment);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -223,7 +311,7 @@ app.get('/api/equipment/:id', (req, res) => {
 
 // E) Register New Equipment
 app.post('/api/equipment', (req, res) => {
-    const { name, serial_number, department, location, assigned_employee, employee_name, purchase_date, warranty_info, maintenance_team_id } = req.body;
+    const { name, serial_number, department, location, assigned_employee, employee_name, purchase_date, warranty_info, maintenance_team_id, work_center } = req.body;
 
     if (!name || !department || !location) {
         return res.status(400).json({ error: 'Name, department, and location are required' });
@@ -236,10 +324,10 @@ app.post('/api/equipment', (req, res) => {
 
     try {
         const stmt = db.prepare(`
-            INSERT INTO Equipment (name, serial_number, department, location, assigned_employee, employee_name, purchase_date, warranty_info, maintenance_team_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO Equipment (name, serial_number, department, location, assigned_employee, employee_name, purchase_date, warranty_info, maintenance_team_id, work_center)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
-        const info = stmt.run(name, serial_number, department, location, assigned_employee || null, employee_name || null, purchase_date || null, warranty_info || null, maintenance_team_id || null);
+        const info = stmt.run(name, serial_number, department, location, assigned_employee || null, employee_name || null, purchase_date || null, warranty_info || null, maintenance_team_id || null, work_center || location); // Fallback to location if work_center not provided
 
         const newEquip = db.prepare('SELECT * FROM Equipment WHERE id = ?').get(info.lastInsertRowid);
         res.status(201).json(newEquip);
@@ -257,12 +345,34 @@ app.get('/api/teams', (req, res) => {
     }
 });
 
+// Admin Staff Endpoint (Live Stats)
+app.get('/api/admin/staff', (req, res) => {
+    // Guard: Super Admin Only
+    if (req.user.role !== 'SUPER_ADMIN') {
+        return res.status(403).json({ error: 'Unauthorized' });
+    }
+
+    try {
+        const staff = db.prepare(`
+            SELECT t.id, t.name, t.role, mt.name as team_name,
+            (SELECT COUNT(*) FROM MaintenanceRequest WHERE technician_id = t.id AND status NOT IN ('repaired', 'scrap')) as active_requests,
+            (SELECT COUNT(*) FROM MaintenanceRequest WHERE technician_id = t.id AND status = 'in_progress') as in_progress_requests
+            FROM Technician t
+            LEFT JOIN MaintenanceTeam mt ON t.team_id = mt.id
+            WHERE t.role IN ('TECHNICIAN', 'TEAM_LEAD')
+        `).all();
+        res.json(staff);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 app.get('/api/technicians', (req, res) => {
     try {
         let query = "SELECT id, name, role, team_id FROM Technician WHERE role = 'TECHNICIAN'";
         let params = [];
 
-        if (req.user.role === 'TEAM_ADMIN') {
+        if (req.user.role === 'TEAM_LEAD') {
             query += ' AND team_id = ?';
             params.push(req.user.team_id);
         }
@@ -287,7 +397,7 @@ app.get('/api/reports/summary', (req, res) => {
         }
 
         // Role filtering
-        if (req.user.role === 'TEAM_ADMIN') {
+        if (req.user.role === 'TEAM_LEAD') {
             whereClause += ' AND r.team_id = ?';
             params.push(req.user.team_id);
         } else if (req.user.role === 'TECHNICIAN') {

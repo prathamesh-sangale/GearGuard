@@ -22,9 +22,12 @@ import { useUser } from '../context/UserContext';
 const Sidebar = ({ isCollapsed, setIsCollapsed }) => {
     const { user } = useUser();
     const navItems = [
-        { label: 'Production Board', icon: Activity, to: '/' },
+        { label: 'Production Board', icon: Activity, to: '/dashboard' },
         { label: 'Service Schedule', icon: Calendar, to: '/calendar' },
-        ...(user.role === 'SUPER_ADMIN' ? [{ label: 'Line Assets', icon: Database, to: '/equipment' }] : []),
+        ...(user.role === 'SUPER_ADMIN' ? [
+            { label: 'Line Assets', icon: Database, to: '/equipment' },
+            { label: 'Global Staff', icon: UsersIcon, to: '/staff' }
+        ] : []),
     ];
 
     return (
@@ -77,6 +80,7 @@ const Sidebar = ({ isCollapsed, setIsCollapsed }) => {
                         ))}
                     </ul>
                 </div>
+
             </nav>
 
             {/* Role Badge Section */}

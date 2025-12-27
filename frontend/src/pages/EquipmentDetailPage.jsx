@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useUser } from '../context/UserContext';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Layout, Settings, ShieldCheck, Map, Users, Info, Trash2 } from 'lucide-react';
+import { ArrowLeft, Layout, Settings, ShieldCheck, Map, Users, Info, Trash2, MapPin } from 'lucide-react';
+
 
 const EquipmentDetailPage = () => {
     const { id } = useParams();
@@ -97,10 +98,7 @@ const EquipmentDetailPage = () => {
                                 <p className="text-[8px] font-black text-brand-muted uppercase tracking-[0.2em] mb-1">Purchase Date</p>
                                 <p className="text-sm font-black text-brand-text uppercase">{item.purchase_date || 'N/A'}</p>
                             </div>
-                            <div>
-                                <p className="text-[8px] font-black text-brand-muted uppercase tracking-[0.2em] mb-1">Warranty Info</p>
-                                <p className="text-sm font-black text-brand-text uppercase">{item.warranty_info || 'N/A'}</p>
-                            </div>
+
                         </div>
                     </div>
                 </div>
@@ -116,8 +114,7 @@ const EquipmentDetailPage = () => {
                         <span className="text-[7px] font-black uppercase tracking-widest mt-1 opacity-60">Open Requests</span>
                     </div>
                     <div className="px-6 py-4 flex items-center gap-3 group-hover:bg-brand-primary transition-all">
-                        <Layout size={18} />
-                        <span className="text-[10px] font-black uppercase tracking-widest">View in Kanban</span>
+                        <span className="text-[10px] font-black uppercase tracking-widest">Maintenance History</span>
                     </div>
                 </button>
             </div>
@@ -141,8 +138,15 @@ const EquipmentDetailPage = () => {
                         <div>
                             <label className="text-[8px] font-black text-brand-muted uppercase tracking-widest">Specific Location</label>
                             <div className="flex items-center gap-2 mt-1">
-                                <Map size={14} className="text-brand-muted" />
-                                <span className="text-[10px] font-black uppercase">{item.location}</span>
+                                <MapPin size={14} className="text-brand-muted" />
+                                <span className="text-[10px] font-black uppercase text-brand-text">{item.location}</span>
+                            </div>
+                        </div>
+                        <div>
+                            <label className="text-[8px] font-black text-brand-muted uppercase tracking-widest">Work Center</label>
+                            <div className="flex items-center gap-2 mt-1">
+                                <span className="w-3.5 h-3.5 border border-brand-muted rounded-[1px] flex items-center justify-center text-[8px] text-brand-muted">W</span>
+                                <span className="text-[10px] font-black uppercase text-brand-text">{item.work_center || item.location}</span>
                             </div>
                         </div>
                     </div>

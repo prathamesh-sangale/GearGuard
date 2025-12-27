@@ -2,19 +2,32 @@ import React, { useState, useEffect } from 'react';
 import { X, Calendar, Wrench, Layout, AlertTriangle, CheckSquare, Users, User } from 'lucide-react';
 import { useUser } from '../context/UserContext';
 
-const MaintenanceRequestModal = ({ isOpen, onClose, selectedDate, onSuccess, initialType = 'corrective' }) => {
-    const [subject, setSubject] = useState('COOLING FAN VIBRATION');
+const MaintenanceRequestModal = ({ isOpen, onClose, onSuccess, followUpData = null, selectedDate = null, initialType = 'corrective' }) => {
+    const [subject, setSubject] = useState('');
     const [equipmentId, setEquipmentId] = useState('');
-    const [type, setType] = useState(initialType);
-    const [date, setDate] = useState('');
+    const [type, setType] = useState('corrective');
+    const [scheduledDate, setScheduledDate] = useState('');
+    const [priority, setPriority] = useState('medium');
     const [equipmentList, setEquipmentList] = useState([]);
+    const [loading, setLoading] = useState(false);
     const [teams, setTeams] = useState([]);
-    const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState(null);
     const [teamId, setTeamId] = useState('');
     const [technicianId, setTechnicianId] = useState('');
     const [technicianList, setTechnicianList] = useState([]);
     const { user } = useUser();
+
+    const fetchEquipment = () => {
+        const headers = {
+            'X-User-Role': user.role,
+            'X-User-Id': user.id,
+            'X-User-Team-Id': user.team_id || ''
+        };
+        fetch('http://localhost:5000/api/equipment', { headers })
+            .then(res => res.json())
+            .then(data => setEquipmentList(data))
+            .catch(err => console.error('Error fetching equipment:', err));
+    };
 
     useEffect(() => {
         if (isOpen) {
@@ -23,18 +36,13 @@ const MaintenanceRequestModal = ({ isOpen, onClose, selectedDate, onSuccess, ini
                 'X-User-Id': user.id,
                 'X-User-Team-Id': user.team_id || ''
             };
-            fetch('http://localhost:5000/api/equipment', { headers })
-                .then(res => res.ok ? res.json() : [])
-                .then(data => setEquipmentList(Array.isArray(data) ? data.filter(eq => !eq.is_scrapped) : []))
-                .catch(err => console.error('Error fetching equipment list:', err));
-
             fetch('http://localhost:5000/api/teams', { headers })
                 .then(res => res.json())
                 .then(data => setTeams(data))
                 .catch(err => console.error('Error fetching teams:', err));
 
             // Fetch technicians if user is Admin/Lead
-            if (user.role === 'SUPER_ADMIN' || user.role === 'TEAM_ADMIN') {
+            if (user.role === 'SUPER_ADMIN' || user.role === 'TEAM_LEAD') {
                 fetch('http://localhost:5000/api/technicians', { headers })
                     .then(res => res.ok ? res.json() : [])
                     .then(data => setTechnicianList(Array.isArray(data) ? data : []))
@@ -44,14 +52,29 @@ const MaintenanceRequestModal = ({ isOpen, onClose, selectedDate, onSuccess, ini
                     });
             }
 
-            if (selectedDate) {
-                setDate(selectedDate.toISOString().split('T')[0]);
+            fetchEquipment();
+
+            if (followUpData) {
+                setSubject(`Follow-up: ${followUpData.subject}`);
+                setEquipmentId(followUpData.equipmentId);
+                setType('corrective');
             } else {
-                setDate(new Date().toISOString().split('T')[0]);
+                // Only reset if NOT a follow-up (persist defaults or clear)
+                // The original code had a default state. Let's respect "initialType".
+                if (selectedDate) {
+                    setScheduledDate(selectedDate.toISOString().split('T')[0]);
+                } else {
+                    setScheduledDate(new Date().toISOString().split('T')[0]);
+                }
+                setType(initialType);
+
+                // Enforce Team Lead Squad Lock
+                if (user.role === 'TEAM_LEAD' && user.team_id) {
+                    setTeamId(user.team_id);
+                }
             }
-            setType(initialType);
         }
-    }, [isOpen, selectedDate, initialType, user]);
+    }, [isOpen, selectedDate, initialType, user, followUpData]);
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -70,12 +93,12 @@ const MaintenanceRequestModal = ({ isOpen, onClose, selectedDate, onSuccess, ini
             setError("Please select the responsible Squad.");
             return;
         }
-        if (type === 'preventive' && !date) {
+        if (type === 'preventive' && !scheduledDate) {
             setError("Preventive Maintenance requires a scheduled execution date.");
             return;
         }
 
-        setSubmitting(true);
+        setLoading(true);
         try {
             const res = await fetch('http://localhost:5000/api/requests', {
                 method: 'POST',
@@ -89,9 +112,9 @@ const MaintenanceRequestModal = ({ isOpen, onClose, selectedDate, onSuccess, ini
                     subject: subject.toUpperCase(),
                     equipment_id: parseInt(equipmentId),
                     team_id: parseInt(teamId),
-                    technician_id: technicianId ? parseInt(technicianId) : null,
+                    technician_id: technicianId || null,
                     type: type,
-                    scheduled_date: date
+                    scheduled_date: scheduledDate
                 }),
             });
 
@@ -106,7 +129,7 @@ const MaintenanceRequestModal = ({ isOpen, onClose, selectedDate, onSuccess, ini
             console.error('Submit error:', error);
             alert('Error creating request');
         } finally {
-            setSubmitting(false);
+            setLoading(false);
         }
     };
 
@@ -203,15 +226,18 @@ const MaintenanceRequestModal = ({ isOpen, onClose, selectedDate, onSuccess, ini
                             <select
                                 required
                                 value={teamId}
+                                disabled={user.role === 'TEAM_LEAD'}
                                 onChange={(e) => {
                                     setTeamId(e.target.value);
                                     setTechnicianId(''); // Reset tech if team changes
                                 }}
-                                className={`w-full bg-gray-50 border-2 rounded-sm py-3 pl-10 pr-4 text-xs font-bold uppercase focus:outline-none focus:border-brand-primary transition-all tracking-wider appearance-none ${!teamId ? 'border-red-200 bg-red-50/30' : 'border-brand-border'}`}
+                                className={`w-full bg-gray-50 border-2 rounded-sm py-3 pl-10 pr-4 text-xs font-bold uppercase focus:outline-none focus:border-brand-primary transition-all tracking-wider appearance-none disabled:opacity-70 disabled:bg-gray-200 disabled:cursor-not-allowed ${!teamId ? 'border-red-200 bg-red-50/30' : 'border-brand-border'}`}
                             >
                                 <option value="">SELECT RESPONSIBLE SQUAD...</option>
                                 {teams.map(t => (
-                                    <option key={t.id} value={t.id}>{t.name} SQUAD</option>
+                                    <option key={t.id} value={t.id}>
+                                        {t.name === 'Triage Squad' ? '❓ NOT SURE / NEEDS REVIEW' : `${t.name} SQUAD`}
+                                    </option>
                                 ))}
                             </select>
                         </div>
@@ -246,8 +272,8 @@ const MaintenanceRequestModal = ({ isOpen, onClose, selectedDate, onSuccess, ini
                             <input
                                 type="date"
                                 required
-                                value={date}
-                                onChange={(e) => setDate(e.target.value)}
+                                value={scheduledDate}
+                                onChange={(e) => setScheduledDate(e.target.value)}
                                 className="w-full bg-gray-50 border-2 border-brand-border rounded-sm py-3 pl-10 pr-4 text-xs font-bold uppercase tracking-wider focus:outline-none focus:border-brand-primary"
                             />
                         </div>
@@ -265,10 +291,10 @@ const MaintenanceRequestModal = ({ isOpen, onClose, selectedDate, onSuccess, ini
                     </button>
                     <button
                         type="submit"
-                        disabled={submitting || !teamId}
+                        disabled={loading || !teamId}
                         className="flex-1 bg-brand-text text-white border-2 border-brand-text py-3 rounded-sm text-[10px] font-black uppercase tracking-widest hover:bg-opacity-90 transition-all disabled:opacity-50"
                     >
-                        {submitting ? 'Creating...' : 'Confirm Request'}
+                        {loading ? 'Creating...' : 'Confirm Request'}
                     </button>
                 </div>
             </form>
