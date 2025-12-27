@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, Database, Building2, MapPin, User, Calendar, ShieldCheck, Users } from 'lucide-react';
+import { useUser } from '../context/UserContext';
 
 const RegisterEquipmentModal = ({ isOpen, onClose, onSuccess }) => {
     const [formData, setFormData] = useState({
@@ -14,10 +15,16 @@ const RegisterEquipmentModal = ({ isOpen, onClose, onSuccess }) => {
     });
     const [teams, setTeams] = useState([]);
     const [submitting, setSubmitting] = useState(false);
+    const { user } = useUser();
 
     useEffect(() => {
         if (isOpen) {
-            fetch('http://localhost:5000/api/teams')
+            const headers = {
+                'X-User-Role': user.role,
+                'X-User-Id': user.id,
+                'X-User-Team-Id': user.team_id || ''
+            };
+            fetch('http://localhost:5000/api/teams', { headers })
                 .then(res => res.json())
                 .then(data => setTeams(data))
                 .catch(err => console.error('Error fetching teams:', err));
@@ -28,16 +35,21 @@ const RegisterEquipmentModal = ({ isOpen, onClose, onSuccess }) => {
         e.preventDefault();
         setSubmitting(true);
         try {
-            const res = await fetch('http://localhost:5000/api/equipment', {
+            const response = await fetch('http://localhost:5000/api/equipment', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-User-Role': user.role,
+                    'X-User-Id': user.id,
+                    'X-User-Team-Id': user.team_id || ''
+                },
                 body: JSON.stringify({
                     ...formData,
                     maintenance_team_id: formData.maintenance_team_id ? parseInt(formData.maintenance_team_id) : null
                 }),
             });
 
-            if (!res.ok) throw new Error('Failed to register equipment');
+            if (!response.ok) throw new Error('Failed to register equipment');
 
             onSuccess();
             onClose();

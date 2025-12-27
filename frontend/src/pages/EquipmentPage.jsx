@@ -1,16 +1,23 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Database, Plus, Search, ChevronRight, MapPin, Building2 } from 'lucide-react';
+import { Database, Plus, Search, ChevronRight, MapPin, Building2, User } from 'lucide-react';
 import RegisterEquipmentModal from '../components/RegisterEquipmentModal';
+import { useUser } from '../context/UserContext';
 
 const EquipmentPage = () => {
     const [equipment, setEquipment] = useState([]);
     const [loading, setLoading] = useState(true);
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const { user } = useUser();
     const navigate = useNavigate();
 
     const fetchEquipment = () => {
-        fetch('http://localhost:5000/api/equipment')
+        const headers = {
+            'X-User-Role': user.role,
+            'X-User-Id': user.id,
+            'X-User-Team-Id': user.team_id || ''
+        };
+        fetch('http://localhost:5000/api/equipment', { headers })
             .then(res => res.json())
             .then(data => {
                 setEquipment(data);
@@ -45,13 +52,15 @@ const EquipmentPage = () => {
                     <h1 className="text-2xl font-black text-brand-text uppercase tracking-tighter">Asset Inventory – AutoMotion Motors</h1>
                     <p className="text-xs font-bold text-brand-muted uppercase tracking-widest mt-1">Production Equipment & Assembly Line Assets</p>
                 </div>
-                <button
-                    onClick={() => setIsModalOpen(true)}
-                    className="flex items-center gap-2 bg-brand-primary text-white border-2 border-brand-primary px-6 py-3 rounded-sm text-[10px] font-black uppercase tracking-widest hover:bg-opacity-90 transition-all font-sans"
-                >
-                    <Plus size={16} />
-                    Register Factory Asset
-                </button>
+                {user.role === 'SUPER_ADMIN' && (
+                    <button
+                        onClick={() => setIsModalOpen(true)}
+                        className="flex items-center gap-2 bg-brand-primary text-white border-2 border-brand-primary px-6 py-3 rounded-sm text-[10px] font-black uppercase tracking-widest hover:bg-opacity-90 transition-all font-sans"
+                    >
+                        <Plus size={16} />
+                        Register Factory Asset
+                    </button>
+                )}
             </div>
 
             {/* Stats/Filters Placeholder */}
@@ -102,14 +111,19 @@ const EquipmentPage = () => {
                                     </div>
                                 </div>
 
-                                <div className="col-span-3 text-[10px] font-bold text-brand-text uppercase tracking-wider flex items-center gap-2">
+                                <div className="col-span-2 text-[10px] font-bold text-brand-text uppercase tracking-wider flex items-center gap-2">
                                     <Building2 size={12} className="text-brand-muted" />
                                     {item.department}
                                 </div>
 
-                                <div className="col-span-3 text-[10px] font-bold text-brand-text uppercase tracking-wider flex items-center gap-2">
+                                <div className="col-span-2 text-[10px] font-bold text-brand-text uppercase tracking-wider flex items-center gap-2">
                                     <MapPin size={12} className="text-brand-muted" />
                                     {item.location}
+                                </div>
+
+                                <div className="col-span-3 text-[10px] font-bold text-brand-text uppercase tracking-wider flex items-center gap-2">
+                                    <User size={12} className="text-brand-muted" />
+                                    {item.assigned_employee || "—"}
                                 </div>
 
                                 <div className="col-span-1 flex justify-end">

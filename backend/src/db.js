@@ -4,7 +4,7 @@ const dotenv = require('dotenv');
 
 dotenv.config();
 
-const dbPath = path.resolve(__dirname, '..', 'database_v2.db');
+const dbPath = path.resolve(__dirname, '..', 'database_v3.db');
 
 const db = new Database(dbPath, { verbose: console.log });
 db.pragma('journal_mode = WAL');
@@ -22,6 +22,7 @@ db.exec(`
     serial_number TEXT,
     department TEXT NOT NULL,
     employee_name TEXT,
+    assigned_employee TEXT,
     location TEXT NOT NULL,
     purchase_date TEXT,
     warranty_info TEXT,
@@ -33,6 +34,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS Technician (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
+    role TEXT NOT NULL CHECK(role IN ('SUPER_ADMIN', 'TEAM_ADMIN', 'TECHNICIAN')),
     team_id INTEGER,
     FOREIGN KEY (team_id) REFERENCES MaintenanceTeam(id)
   );
@@ -54,33 +56,55 @@ db.exec(`
   );
 `);
 
+// Migration: Add assigned_employee column if it doesn't exist
+const columns = db.prepare("PRAGMA table_info(Equipment)").all();
+const hasAssignedEmployee = columns.some(c => c.name === 'assigned_employee');
+if (!hasAssignedEmployee) {
+  try {
+    db.exec("ALTER TABLE Equipment ADD COLUMN assigned_employee TEXT");
+    console.log("Migration: Added assigned_employee column to Equipment table");
+  } catch (err) {
+    console.error("Migration error adding assigned_employee:", err);
+  }
+}
+
 // Seed Data (if empty)
 const teamCount = db.prepare('SELECT COUNT(*) as count FROM MaintenanceTeam').get().count;
 if (teamCount === 0) {
   const insertTeam = db.prepare('INSERT INTO MaintenanceTeam (name) VALUES (?)');
-  const insertTechnician = db.prepare('INSERT INTO Technician (name, team_id) VALUES (?, ?)');
+  const insertTechnician = db.prepare('INSERT INTO Technician (name, role, team_id) VALUES (?, ?, ?)');
 
   const mechTeam = insertTeam.run('Mechanical Team').lastInsertRowid;
   const elecTeam = insertTeam.run('Electrical Team').lastInsertRowid;
   const itTeam = insertTeam.run('IT Support Team').lastInsertRowid;
   const facilTeam = insertTeam.run('Facilities Team').lastInsertRowid;
 
-  insertTechnician.run('Rahul', mechTeam);
-  insertTechnician.run('Amit', elecTeam);
-  insertTechnician.run('Neha', itTeam);
-  insertTechnician.run('Sunil', facilTeam);
+  // 1. Super Admin (No team)
+  insertTechnician.run('Nikunj (Super Admin)', 'SUPER_ADMIN', null);
+
+  // 2. Team Admins (1 per team)
+  insertTechnician.run('Rahul (Lead)', 'TEAM_ADMIN', mechTeam);
+  insertTechnician.run('Amit (Lead)', 'TEAM_ADMIN', elecTeam);
+  insertTechnician.run('Neha (Lead)', 'TEAM_ADMIN', itTeam);
+  insertTechnician.run('Sunil (Lead)', 'TEAM_ADMIN', facilTeam);
+
+  // 3. Technicians (The execution squad)
+  insertTechnician.run('S. Varma', 'TECHNICIAN', mechTeam);
+  insertTechnician.run('K. Singh', 'TECHNICIAN', elecTeam);
+  insertTechnician.run('J. Doe', 'TECHNICIAN', itTeam);
+  insertTechnician.run('M. Khan', 'TECHNICIAN', facilTeam);
 
   // Seed some equipment
-  const insertEquip = db.prepare('INSERT INTO Equipment (name, serial_number, department, location, employee_name, purchase_date, warranty_info, maintenance_team_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+  const insertEquip = db.prepare('INSERT INTO Equipment (name, serial_number, department, location, assigned_employee, employee_name, purchase_date, warranty_info, maintenance_team_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
 
-  insertEquip.run('CNC Machine – Engine Block Line', 'CNC-EB-001', 'Production', 'Zone A - Machine Shop', 'S. Kumar (Supervisor)', '2023-01-15', '3-year service contract', mechTeam);
-  insertEquip.run('Robotic Welding Arm – Assembly Line 3', 'WELD-R-302', 'Assembly', 'Section 4 - Welding', 'V. Singh (Line Lead)', '2023-05-20', 'Annual service plan', mechTeam);
-  insertEquip.run('Hydraulic Press – Chassis Unit', 'PRES-CH-105', 'Production', 'Press Shop - Bay 2', 'A. Roy (Operator)', '2022-11-10', 'Parts warranty', mechTeam);
-  insertEquip.run('Paint Booth Conveyor', 'PAINT-C-01', 'Paint Shop', 'Paint Dept - Line 1', 'M. Das (Finishing)', '2021-08-05', 'Standard Coverage', elecTeam);
-  insertEquip.run('Air Compressor – Utilities', 'UTIL-AC-02', 'Utilities', 'Utility Area - G/F', 'P. Joshi (Facilities)', '2024-03-01', '24-month warranty', facilTeam);
-  insertEquip.run('Quality Inspection Scanner', 'QUAL-SC-08', 'Production', 'End of Line Q-Point', 'R. Sharma (QA)', '2024-02-14', 'Software support active', itTeam);
-  insertEquip.run('Factory Server Rack', 'IT-SRV-01', 'IT', 'Admin Server Room', 'Neha (Tech)', '2023-09-12', 'Mission Critical Support', itTeam);
-  insertEquip.run('Office HVAC System', 'FAC-HVAC-01', 'Utilities', 'Office Building - Roof', 'Sunil (Maint)', '2020-10-10', 'Expired', facilTeam);
+  insertEquip.run('CNC Machine – Engine Block Line', 'CNC-EB-001', 'Production', 'Zone A - Machine Shop', 'N. Verma (Engine Specialist)', 'S. Kumar (Supervisor)', '2023-01-15', '3-year service contract', mechTeam);
+  insertEquip.run('Robotic Welding Arm – Assembly Line 3', 'WELD-R-302', 'Assembly', 'Section 4 - Welding', 'A. Singh (Robotics Tech)', 'V. Singh (Line Lead)', '2023-05-20', 'Annual service plan', mechTeam);
+  insertEquip.run('Hydraulic Press – Chassis Unit', 'PRES-CH-105', 'Production', 'Press Shop - Bay 2', 'K. Das (Press Operator)', 'A. Roy (Operator)', '2022-11-10', 'Parts warranty', mechTeam);
+  insertEquip.run('Paint Booth Conveyor', 'PAINT-C-01', 'Paint Shop', 'Paint Dept - Line 1', 'M. Khan (Finishing Lead)', 'M. Das (Finishing)', '2021-08-05', 'Standard Coverage', elecTeam);
+  insertEquip.run('Air Compressor – Utilities', 'UTIL-AC-02', 'Utilities', 'Utility Area - G/F', 'R. Patel (Utilities Admin)', 'P. Joshi (Facilities)', '2024-03-01', '24-month warranty', facilTeam);
+  insertEquip.run('Quality Inspection Scanner', 'QUAL-SC-08', 'Production', 'End of Line Q-Point', 'J. Doe (Quality Tech)', 'R. Sharma (QA)', '2024-02-14', 'Software support active', itTeam);
+  insertEquip.run('Factory Server Rack', 'IT-SRV-01', 'IT', 'Admin Server Room', 'Neha (Systems Admin)', 'Neha (Tech)', '2023-09-12', 'Mission Critical Support', itTeam);
+  insertEquip.run('Office HVAC System', 'FAC-HVAC-01', 'Utilities', 'Office Building - Roof', 'Sunil (Facilities Lead)', 'Sunil (Maint)', '2020-10-10', 'Expired', facilTeam);
 
   const insertRequest = db.prepare('INSERT INTO MaintenanceRequest (subject, equipment_id, team_id, status, type, scheduled_date, duration_hours) VALUES (?, ?, ?, ?, ?, ?, ?)');
 

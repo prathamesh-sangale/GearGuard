@@ -1,9 +1,11 @@
 import React from 'react';
-import { User, Clock, AlertCircle } from 'lucide-react';
+import { User, Clock, AlertCircle, Users } from 'lucide-react';
 import { useDraggable } from '@dnd-kit/core';
 import { CSS } from '@dnd-kit/utilities';
+import { useUser } from '../context/UserContext';
 
-const KanbanCard = ({ id, subject, equipment, technician, date, isOverdue, status, onAssign }) => {
+const KanbanCard = ({ id, subject, equipment, technician, teamId, teamName, date, isOverdue, status, onAssign }) => {
+  const { user } = useUser();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useDraggable({
     id: id,
   });
@@ -15,28 +17,43 @@ const KanbanCard = ({ id, subject, equipment, technician, date, isOverdue, statu
 
   const handlePickUp = (e) => {
     e.stopPropagation();
-    // In a real app we'd get the current user. For this demo, let's just pick a random/default tech or prompt.
-    // Given the "Manager or technician assigns themselves" rule, we'll just trigger the onAssign callback.
-    if (onAssign) onAssign(id);
+    if (onAssign) onAssign(id, teamId);
   };
+
+  // Permission Logic: Only Super Admin or Team Lead of THIS squad can assign
+  const canAssign = user.role === 'SUPER_ADMIN' || (user.role === 'TEAM_ADMIN' && user.team_id === teamId);
 
   return (
     <div
       ref={setNodeRef}
       style={style}
-      className={`bg-white border-2 ${isDragging ? 'border-brand-primary opacity-50 z-50 rotate-3' : 'border-brand-border'} rounded-sm p-5 cursor-grab active:cursor-grabbing hover:border-brand-text transition-all group shadow-[2px_2px_0px_0px_rgba(0,0,0,0.05)] hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]`}
+      className={`bg-white border-2 ${isDragging ? 'border-brand-primary opacity-50 z-50 rotate-3' : isOverdue ? 'border-red-500 shadow-[4px_4px_0px_0px_rgba(239,68,68,1)]' : 'border-brand-border'} rounded-sm p-5 cursor-grab active:cursor-grabbing hover:border-brand-text transition-all group shadow-[2px_2px_0px_0px_rgba(0,0,0,0.05)] hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]`}
       {...attributes}
       {...listeners}
     >
       {/* Top Section */}
-      <div className="flex justify-between items-start mb-4">
-        <h4 className="text-[11px] font-black text-brand-text uppercase leading-relaxed tracking-wider group-hover:text-brand-primary transition-colors pr-2">
+      <div className="flex justify-between items-start mb-2">
+        <h4 className={`text-[11px] font-black uppercase leading-relaxed tracking-wider group-hover:text-brand-primary transition-colors pr-2 ${isOverdue ? 'text-red-600' : 'text-brand-text'}`}>
           {subject || "Asset Repair Operation"}
         </h4>
         {isOverdue && (
-          <div className="flex-shrink-0 bg-red-500 p-1.5 rounded-sm ring-2 ring-red-100 animate-pulse">
-            <Clock size={12} className="text-white" />
+          <div className="flex flex-col items-end gap-1 flex-shrink-0">
+            <div className="flex-shrink-0 bg-red-500 p-1.5 rounded-sm ring-2 ring-red-100 animate-pulse">
+              <Clock size={12} className="text-white" />
+            </div>
           </div>
+        )}
+      </div>
+
+      {/* Squad Badge */}
+      <div className="mb-4 flex items-center gap-1.5">
+        <span className="bg-gray-100 text-gray-600 text-[8px] font-black px-2 py-0.5 rounded-full uppercase tracking-widest border border-gray-200">
+          {teamName || "General"} SQUAD
+        </span>
+        {!technician ? (
+          <span className="text-[8px] font-black text-red-500 uppercase tracking-widest ring-1 ring-red-100 px-1.5 py-0.5 rounded-sm bg-red-50/50">Unassigned</span>
+        ) : (
+          <span className="text-[8px] font-black text-green-600 uppercase tracking-widest ring-1 ring-green-100 px-1.5 py-0.5 rounded-sm bg-green-50/50">Assigned</span>
         )}
       </div>
 
@@ -47,12 +64,13 @@ const KanbanCard = ({ id, subject, equipment, technician, date, isOverdue, statu
             <div className="w-1.5 h-1.5 bg-brand-primary rounded-full" />
             <span className="text-[10px] font-black text-brand-muted uppercase tracking-wider">{equipment || "Engine Line Asset #001"}</span>
           </div>
-          {status === 'new' && !technician && (
+          {/* Assignment Control: Only for Leads/Admins */}
+          {!technician && canAssign && (
             <button
               onClick={handlePickUp}
-              className="px-2 py-0.5 border-2 border-brand-text text-[8px] font-black uppercase tracking-widest hover:bg-brand-text hover:text-white transition-all pointer-events-auto"
+              className="px-2 py-0.5 border-2 border-brand-text text-[8px] font-black uppercase tracking-widest hover:bg-brand-text hover:text-white transition-all pointer-events-auto shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] active:shadow-none translate-y-0 active:translate-y-0.5"
             >
-              Pick Up
+              Assign
             </button>
           )}
         </div>

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { X, Calendar, Wrench, Layout, AlertTriangle, CheckSquare } from 'lucide-react';
+import { X, Calendar, Wrench, Layout, AlertTriangle, CheckSquare, Users, User } from 'lucide-react';
+import { useUser } from '../context/UserContext';
 
 const MaintenanceRequestModal = ({ isOpen, onClose, selectedDate, onSuccess, initialType = 'corrective' }) => {
     const [subject, setSubject] = useState('COOLING FAN VIBRATION');
@@ -7,14 +8,41 @@ const MaintenanceRequestModal = ({ isOpen, onClose, selectedDate, onSuccess, ini
     const [type, setType] = useState(initialType);
     const [date, setDate] = useState('');
     const [equipmentList, setEquipmentList] = useState([]);
+    const [teams, setTeams] = useState([]);
     const [submitting, setSubmitting] = useState(false);
+    const [error, setError] = useState(null);
+    const [teamId, setTeamId] = useState('');
+    const [technicianId, setTechnicianId] = useState('');
+    const [technicianList, setTechnicianList] = useState([]);
+    const { user } = useUser();
 
     useEffect(() => {
         if (isOpen) {
-            fetch('http://localhost:5000/api/equipment')
-                .then(res => res.json())
-                .then(data => setEquipmentList(data.filter(eq => !eq.is_scrapped)))
+            const headers = {
+                'X-User-Role': user.role,
+                'X-User-Id': user.id,
+                'X-User-Team-Id': user.team_id || ''
+            };
+            fetch('http://localhost:5000/api/equipment', { headers })
+                .then(res => res.ok ? res.json() : [])
+                .then(data => setEquipmentList(Array.isArray(data) ? data.filter(eq => !eq.is_scrapped) : []))
                 .catch(err => console.error('Error fetching equipment list:', err));
+
+            fetch('http://localhost:5000/api/teams', { headers })
+                .then(res => res.json())
+                .then(data => setTeams(data))
+                .catch(err => console.error('Error fetching teams:', err));
+
+            // Fetch technicians if user is Admin/Lead
+            if (user.role === 'SUPER_ADMIN' || user.role === 'TEAM_ADMIN') {
+                fetch('http://localhost:5000/api/technicians', { headers })
+                    .then(res => res.ok ? res.json() : [])
+                    .then(data => setTechnicianList(Array.isArray(data) ? data : []))
+                    .catch(err => {
+                        console.error('Error fetching technicians:', err);
+                        setTechnicianList([]);
+                    });
+            }
 
             if (selectedDate) {
                 setDate(selectedDate.toISOString().split('T')[0]);
@@ -23,20 +51,45 @@ const MaintenanceRequestModal = ({ isOpen, onClose, selectedDate, onSuccess, ini
             }
             setType(initialType);
         }
-    }, [isOpen, selectedDate, initialType]);
+    }, [isOpen, selectedDate, initialType, user]);
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        if (!subject || !equipmentId) return;
+        setError(null);
+
+        // Validation - Matrix Implementation
+        if (!subject.trim()) {
+            setError("Request Subject is required.");
+            return;
+        }
+        if (!equipmentId) {
+            setError("Please select the affected Factory Asset.");
+            return;
+        }
+        if (!teamId) {
+            setError("Please select the responsible Squad.");
+            return;
+        }
+        if (type === 'preventive' && !date) {
+            setError("Preventive Maintenance requires a scheduled execution date.");
+            return;
+        }
 
         setSubmitting(true);
         try {
             const res = await fetch('http://localhost:5000/api/requests', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-User-Role': user.role,
+                    'X-User-Id': user.id,
+                    'X-User-Team-Id': user.team_id || ''
+                },
                 body: JSON.stringify({
                     subject: subject.toUpperCase(),
                     equipment_id: parseInt(equipmentId),
+                    team_id: parseInt(teamId),
+                    technician_id: technicianId ? parseInt(technicianId) : null,
                     type: type,
                     scheduled_date: date
                 }),
@@ -80,6 +133,14 @@ const MaintenanceRequestModal = ({ isOpen, onClose, selectedDate, onSuccess, ini
                     </button>
                 </div>
 
+                {/* Error Banner */}
+                {error && (
+                    <div className="bg-red-500 text-white px-8 py-3 flex items-center gap-3 animate-in slide-in-from-top duration-300">
+                        <AlertTriangle size={14} />
+                        <span className="text-[10px] font-black uppercase tracking-widest">{error}</span>
+                    </div>
+                )}
+
                 {/* Modal Body */}
                 <div className="p-8 space-y-6">
                     {/* Type Selector */}
@@ -112,7 +173,7 @@ const MaintenanceRequestModal = ({ isOpen, onClose, selectedDate, onSuccess, ini
                                 value={subject}
                                 onChange={(e) => setSubject(e.target.value)}
                                 placeholder="E.G. WELDING ARM VIBRATION"
-                                className="w-full bg-gray-50 border-2 border-brand-border rounded-sm py-3 pl-10 pr-4 text-xs font-bold uppercase focus:outline-none focus:border-brand-primary transition-all tracking-wider"
+                                className={`w-full bg-gray-50 border-2 rounded-sm py-3 pl-10 pr-4 text-xs font-bold uppercase focus:outline-none focus:border-brand-primary transition-all tracking-wider ${!subject ? 'border-red-200 bg-red-50/30' : 'border-brand-border'}`}
                             />
                         </div>
                     </div>
@@ -125,7 +186,7 @@ const MaintenanceRequestModal = ({ isOpen, onClose, selectedDate, onSuccess, ini
                                 required
                                 value={equipmentId}
                                 onChange={(e) => setEquipmentId(e.target.value)}
-                                className="w-full bg-gray-50 border-2 border-brand-border rounded-sm py-3 pl-10 pr-4 text-xs font-bold uppercase focus:outline-none focus:border-brand-primary transition-all tracking-wider appearance-none"
+                                className={`w-full bg-gray-50 border-2 rounded-sm py-3 pl-10 pr-4 text-xs font-bold uppercase focus:outline-none focus:border-brand-primary transition-all tracking-wider appearance-none ${!equipmentId ? 'border-red-200 bg-red-50/30' : 'border-brand-border'}`}
                             >
                                 <option value="">SELECT EQUIPMENT...</option>
                                 {equipmentList.map(eq => (
@@ -134,6 +195,49 @@ const MaintenanceRequestModal = ({ isOpen, onClose, selectedDate, onSuccess, ini
                             </select>
                         </div>
                     </div>
+
+                    <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-brand-muted uppercase tracking-widest px-1">Affected Squad (Mandatory)</label>
+                        <div className="relative">
+                            <Users className="absolute left-3 top-1/2 -translate-y-1/2 text-brand-muted" size={14} />
+                            <select
+                                required
+                                value={teamId}
+                                onChange={(e) => {
+                                    setTeamId(e.target.value);
+                                    setTechnicianId(''); // Reset tech if team changes
+                                }}
+                                className={`w-full bg-gray-50 border-2 rounded-sm py-3 pl-10 pr-4 text-xs font-bold uppercase focus:outline-none focus:border-brand-primary transition-all tracking-wider appearance-none ${!teamId ? 'border-red-200 bg-red-50/30' : 'border-brand-border'}`}
+                            >
+                                <option value="">SELECT RESPONSIBLE SQUAD...</option>
+                                {teams.map(t => (
+                                    <option key={t.id} value={t.id}>{t.name} SQUAD</option>
+                                ))}
+                            </select>
+                        </div>
+                    </div>
+
+                    {(user.role === 'SUPER_ADMIN' || user.role === 'TEAM_ADMIN') && teamId && (
+                        <div className="space-y-1.5 animate-in slide-in-from-top-1 duration-200">
+                            <label className="text-[10px] font-black text-brand-muted uppercase tracking-widest px-1">Assign Technician (Optional)</label>
+                            <div className="relative">
+                                <User className="absolute left-3 top-1/2 -translate-y-1/2 text-brand-muted" size={14} />
+                                <select
+                                    value={technicianId}
+                                    onChange={(e) => setTechnicianId(e.target.value)}
+                                    className="w-full bg-gray-50 border-2 border-brand-border rounded-sm py-3 pl-10 pr-4 text-xs font-bold uppercase focus:outline-none focus:border-brand-primary transition-all tracking-wider appearance-none"
+                                >
+                                    <option value="">LEAVE UNASSIGNED...</option>
+                                    {technicianList
+                                        .filter(t => Number(t.team_id) === Number(teamId))
+                                        .map(t => (
+                                            <option key={t.id} value={t.id}>{t.name} (ID: #{t.id})</option>
+                                        ))
+                                    }
+                                </select>
+                            </div>
+                        </div>
+                    )}
 
                     <div className="space-y-1.5">
                         <label className="text-[10px] font-black text-brand-muted uppercase tracking-widest px-1">Execution Date</label>
@@ -161,7 +265,7 @@ const MaintenanceRequestModal = ({ isOpen, onClose, selectedDate, onSuccess, ini
                     </button>
                     <button
                         type="submit"
-                        disabled={submitting}
+                        disabled={submitting || !teamId}
                         className="flex-1 bg-brand-text text-white border-2 border-brand-text py-3 rounded-sm text-[10px] font-black uppercase tracking-widest hover:bg-opacity-90 transition-all disabled:opacity-50"
                     >
                         {submitting ? 'Creating...' : 'Confirm Request'}

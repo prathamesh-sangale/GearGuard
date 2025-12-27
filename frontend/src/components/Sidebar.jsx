@@ -12,14 +12,19 @@ import {
     Layout,
     Car,
     Activity,
-    Cog
+    Cog,
+    Shield,
+    Users as UsersIcon,
+    User as UserIcon
 } from 'lucide-react';
+import { useUser } from '../context/UserContext';
 
 const Sidebar = ({ isCollapsed, setIsCollapsed }) => {
+    const { user } = useUser();
     const navItems = [
         { label: 'Production Board', icon: Activity, to: '/' },
         { label: 'Service Schedule', icon: Calendar, to: '/calendar' },
-        { label: 'Line Assets', icon: Database, to: '/equipment' },
+        ...(user.role === 'SUPER_ADMIN' ? [{ label: 'Line Assets', icon: Database, to: '/equipment' }] : []),
     ];
 
     return (
@@ -74,11 +79,51 @@ const Sidebar = ({ isCollapsed, setIsCollapsed }) => {
                 </div>
             </nav>
 
-            {isCollapsed && (
-                <div className="p-4 border-t border-brand-border flex justify-center">
-                    <div className="w-10 h-10 rounded-md bg-transparent border border-brand-border flex items-center justify-center text-brand-muted hover:text-brand-primary transition-colors cursor-pointer">
-                        <Settings size={18} />
+            {/* Role Badge Section */}
+            <div className={`p-4 border-t border-brand-border bg-gray-50 flex items-center gap-3 ${isCollapsed ? 'justify-center' : 'px-6 py-4'}`}>
+                <div className={`w-8 h-8 rounded-sm border-2 flex items-center justify-center flex-shrink-0 ${user.role === 'SUPER_ADMIN' ? 'border-red-500 bg-white' : 'border-brand-primary bg-white'}`}>
+                    {user.role === 'SUPER_ADMIN' ? <Shield size={14} className="text-red-500" /> : <UsersIcon size={14} className="text-brand-primary" />}
+                </div>
+                {!isCollapsed && (
+                    <div className="flex flex-col min-w-0">
+                        <span className="text-[10px] font-black text-brand-text uppercase leading-none truncate">{user.name}</span>
+                        <span className="text-[8px] font-bold text-brand-primary uppercase tracking-tighter mt-1">{user.role.replace('_', ' ')}</span>
                     </div>
+                )}
+            </div>
+
+            {user.role === 'SUPER_ADMIN' && (
+                <div className="p-4 border-t border-brand-border flex justify-center">
+                    <button
+                        onClick={async () => {
+                            if (window.confirm('⚠️ DANGER ZONE ⚠️\n\nAre you sure you want to ERASE ALL DATA?\nThis will clear all maintenance requests and history.\n\nTechnicians, Teams, and Equipment will remain safe.')) {
+                                try {
+                                    const res = await fetch('http://localhost:5000/api/admin/reset', {
+                                        method: 'DELETE',
+                                        headers: {
+                                            'X-User-Role': user.role,
+                                            'X-User-Id': user.id
+                                        }
+                                    });
+                                    if (res.ok) {
+                                        alert('Factory Reset Complete. System Rebooting...');
+                                        window.location.reload();
+                                    } else {
+                                        const err = await res.json();
+                                        alert(`Reset Failed: ${err.error || 'Unknown Error'}`);
+                                    }
+                                } catch (e) {
+                                    console.error(e);
+                                    alert('Server Error');
+                                }
+                            }
+                        }}
+                        className={`w-full flex items-center ${isCollapsed ? 'justify-center' : 'justify-start gap-4'} px-4 py-2 text-red-500 hover:bg-red-50 hover:text-red-600 transition-all rounded-sm group`}
+                        title="Danger: Factory Reset"
+                    >
+                        <Settings size={20} className="group-hover:rotate-180 transition-transform" />
+                        {!isCollapsed && <span className="font-black text-xs uppercase tracking-widest">Reset Database</span>}
+                    </button>
                 </div>
             )}
         </aside>

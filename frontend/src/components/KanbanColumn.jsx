@@ -29,6 +29,8 @@ const KanbanColumn = ({ id, title, requests = [], isDroppable = true, onAssign }
                             subject={request.subject}
                             equipment={request.equipment_name}
                             technician={request.technician_name}
+                            teamId={request.team_id}
+                            teamName={request.team_name}
                             date={request.scheduled_date ? format(parseISO(request.scheduled_date), 'MMM d') : '-'}
                             isOverdue={request.isOverdue}
                             status={request.status}

@@ -16,6 +16,16 @@ AutoMotion isn't just about recording faults; it's about **Predictive Action** a
 
 ---
 
+## 🛡️ Organizational Roles
+
+AutoMotion uses a hierarchical role system to ensure shop floor security and operational efficiency:
+
+- **👑 Super Admin**: Global visibility across all teams. Can register new assets, decommission equipment, and override any maintenance schedule.
+- **👮 Team Admin**: Departmental lead (e.g., Mechanical Lead). Can manage their specific squad, assign technicians, and mark equipment as "Scrap" if beyond repair.
+- **🔧 Technician**: The execution engine. Can view and update their assigned tasks, move logs from "New" to "Repaired," and record maintenance durations.
+
+---
+
 ## 🛠️ Tech Specs (The Chassis)
 
 This system is built for speed and durability:

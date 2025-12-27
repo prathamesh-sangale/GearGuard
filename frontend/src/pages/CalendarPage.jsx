@@ -15,6 +15,7 @@ import {
 } from 'date-fns';
 import { ChevronLeft, ChevronRight, AlertCircle } from 'lucide-react';
 import MaintenanceRequestModal from '../components/MaintenanceRequestModal';
+import { useUser } from '../context/UserContext';
 
 const CalendarPage = () => {
     const [currentMonth, setCurrentMonth] = useState(new Date());
@@ -22,12 +23,23 @@ const CalendarPage = () => {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [events, setEvents] = useState([]);
     const [loading, setLoading] = useState(true);
+    const { user } = useUser();
 
     const fetchEvents = () => {
-        fetch('http://localhost:5000/api/requests?type=preventive')
+        const headers = {
+            'X-User-Role': user.role,
+            'X-User-Id': user.id,
+            'X-User-Team-Id': user.team_id || ''
+        };
+        fetch('http://localhost:5000/api/requests?type=preventive', { headers })
             .then(res => res.json())
             .then(data => {
-                setEvents(data);
+                // Matrix: Team Admin and Technician see TEAM ONLY
+                let filtered = data;
+                if (user.role !== 'SUPER_ADMIN') {
+                    filtered = data.filter(e => Number(e.team_id) === Number(user.team_id));
+                }
+                setEvents(filtered);
                 setLoading(false);
             })
             .catch(err => {
@@ -108,9 +120,10 @@ const CalendarPage = () => {
             days.push(
                 <div
                     key={d.toString()}
-                    className={`min-h-[140px] p-2 border-r-2 border-b-2 border-brand-border transition-all cursor-pointer group hover:bg-gray-50 relative ${!isCurrentMonth ? 'bg-gray-50/20 text-brand-muted opacity-40' : 'bg-white'
-                        }`}
+                    className={`min-h-[140px] p-2 border-r-2 border-b-2 transition-all cursor-pointer group hover:bg-gray-50 relative ${!isCurrentMonth ? 'bg-gray-50/20 text-brand-muted opacity-40' : 'bg-white'
+                        } ${dayEvents.some(e => e.isOverdue) ? 'border-red-500' : 'border-brand-border'}`}
                     onClick={() => {
+                        if (user.role === 'TECHNICIAN') return; // Matrix: NO for Technician
                         setSelectedDate(d);
                         setIsModalOpen(true);
                     }}
@@ -124,18 +137,23 @@ const CalendarPage = () => {
 
                     <div className="space-y-1">
                         {dayEvents.map((event, idx) => (
-                            <div key={idx} className={`p-1.5 rounded-sm flex flex-col gap-0.5 border ${event.isOverdue ? 'bg-red-500 border-red-200 text-white' : 'bg-brand-primary text-white border-white/20'}`}>
-                                <span className="text-[8px] font-black uppercase leading-tight truncate">{event.subject}</span>
+                            <div key={idx} className={`p-1.5 rounded-sm flex flex-col gap-0.5 border ${event.isOverdue ? 'bg-red-600 border-red-200 text-white shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]' : 'bg-brand-primary text-white border-white/20'}`}>
+                                <span className="text-[8px] font-black uppercase leading-tight truncate">
+                                    {event.isOverdue && '⚠️ '}
+                                    {event.subject}
+                                </span>
                                 <span className="text-[7px] font-bold opacity-70 uppercase leading-none truncate">{event.equipment_name}</span>
                             </div>
                         ))}
                     </div>
 
-                    <div className="absolute inset-0 opacity-0 group-hover:opacity-100 flex items-center justify-center pointer-events-none transition-opacity">
-                        <div className="bg-white/80 backdrop-blur px-3 py-1 border border-brand-border rounded-sm text-[8px] font-black text-brand-primary uppercase tracking-widest">
-                            + Book Service
+                    {user.role !== 'TECHNICIAN' && (
+                        <div className="absolute inset-0 opacity-0 group-hover:opacity-100 flex items-center justify-center pointer-events-none transition-opacity">
+                            <div className="bg-white/80 backdrop-blur px-3 py-1 border border-brand-border rounded-sm text-[8px] font-black text-brand-primary uppercase tracking-widest">
+                                + Book Service
+                            </div>
                         </div>
-                    </div>
+                    )}
                 </div>
             );
 

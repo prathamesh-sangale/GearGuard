@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useUser } from '../context/UserContext';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Layout, Settings, ShieldCheck, Map, Users, Info, Trash2 } from 'lucide-react';
 
@@ -7,16 +8,26 @@ const EquipmentDetailPage = () => {
     const navigate = useNavigate();
     const [item, setItem] = useState(null);
     const [loading, setLoading] = useState(true);
+    const { user } = useUser();
 
     useEffect(() => {
-        fetch(`http://localhost:5000/api/equipment/${id}`)
-            .then(res => res.json())
+        const headers = {
+            'X-User-Role': user.role,
+            'X-User-Id': user.id,
+            'X-User-Team-Id': user.team_id || ''
+        };
+        fetch(`http://localhost:5000/api/equipment/${id}`, { headers })
+            .then(res => {
+                if (!res.ok) throw new Error('Failed to fetch');
+                return res.json();
+            })
             .then(data => {
                 setItem(data);
                 setLoading(false);
             })
             .catch(err => {
                 console.error('Error fetching equipment detail:', err);
+                setItem(null);
                 setLoading(false);
             });
     }, [id]);
@@ -79,8 +90,8 @@ const EquipmentDetailPage = () => {
                                 </div>
                             </div>
                             <div>
-                                <p className="text-[8px] font-black text-brand-muted uppercase tracking-[0.2em] mb-1">Assigned Employee</p>
-                                <p className="text-sm font-black text-brand-text uppercase">{item.employee_name || 'Unassigned'}</p>
+                                <p className="text-[8px] font-black text-brand-muted uppercase tracking-[0.2em] mb-1">Assigned Representative</p>
+                                <p className="text-sm font-black text-brand-text uppercase">{item.assigned_employee || '—'}</p>
                             </div>
                             <div>
                                 <p className="text-[8px] font-black text-brand-muted uppercase tracking-[0.2em] mb-1">Purchase Date</p>
